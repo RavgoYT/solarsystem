@@ -23,7 +23,7 @@ export const orbitControlsConfig = {
     rotateSpeed: 0.5,
     zoomSpeed: 1.0,
     panSpeed: 0.8,
-    minDistance: 10,
+    minDistance: 1,
     maxDistance: 80000
 };
 

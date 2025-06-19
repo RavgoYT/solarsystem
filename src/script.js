@@ -56,16 +56,65 @@ let transitionProgress = 0;
 let transitionDuration = 1.0;
 let startCameraPosition = new THREE.Vector3();
 let startTargetPosition = new THREE.Vector3();
-let timeScale = 0.1;
+let timeScale = 1; // 1x is real time
 const targetNameElement = document.getElementById('targetName');
 const tidalStatusElement = document.getElementById('tidalStatus');
 const speedSlider = document.getElementById('speed');
 const speedValue = document.getElementById('speedValue');
 
+// --- Speed slider min/max logic ---
+const SPEED_MIN = 0; // stopped
+const SPEED_MAX = 100; // super fast, set as you like
+const SPEED_REALTIME = 0.000001; // set your real time value
+
+speedSlider.min = SPEED_MIN;
+speedSlider.max = SPEED_MAX;
+speedSlider.step = 0.001;
+speedSlider.value = 1;
+
+timeScale = SPEED_REALTIME;
+
+function updateSpeedDisplay(val) {
+    let displayVal;
+    if (val == 0) {
+        speedValue.textContent = 'Stopped';
+        return;
+    } else if (val == 1) {
+        speedValue.textContent = '1x (Real Time)';
+        return;
+    } else if (val == SPEED_MAX) {
+        speedValue.textContent = '1000x';
+        return;
+    }
+    // Above 2: steps of 5, no decimals
+    if (val > 2) {
+        displayVal = Math.round(val / 5) * 5;
+        speedValue.textContent = displayVal + 'x';
+    } else if (val > 0.5) {
+        // 0.5 to 2: steps of 0.5
+        displayVal = Math.round(val * 2) / 2;
+        speedValue.textContent = displayVal.toFixed(1).replace(/\.0$/, '') + 'x';
+    } else {
+        // 0 to 0.5: steps of 0.05
+        displayVal = Math.round(val / 0.05) * 0.05;
+        speedValue.textContent = displayVal.toFixed(2).replace(/0+$/, '').replace(/\.$/, '') + 'x';
+    }
+}
+
 speedSlider.addEventListener('input', (event) => {
-    timeScale = parseFloat(event.target.value);
-    speedValue.textContent = timeScale.toFixed(2);
+    let sliderVal = parseFloat(event.target.value);
+    if (sliderVal === 1) {
+        timeScale = SPEED_REALTIME;
+    } else if (sliderVal === SPEED_MAX) {
+        timeScale = 1000;
+    } else {
+        timeScale = sliderVal;
+    }
+    updateSpeedDisplay(sliderVal);
 });
+
+// Initialize display
+updateSpeedDisplay(speedSlider.value);
 
 function toggleTidalLock() {
     if (currentTargetIndex >= 0) {
@@ -177,6 +226,36 @@ document.addEventListener('keydown', (event) => {
         toggleMoonView();
     } else if (event.key === 'l' || event.key === 'L') {
         toggleTidalLock();
+    }
+});
+
+// Restore h key toggle for tooltips, UI, and orbit lines
+window.addEventListener('keydown', (e) => {
+    if (e.key === 'h' || e.key === 'H') {
+        tooltipsEnabled = !tooltipsEnabled;
+        // Toggle UI panel
+        const panel = document.querySelector('.control-panel');
+        if (panel) panel.style.display = tooltipsEnabled ? '' : 'none';
+        // Toggle orbit lines (planets)
+        orbitLines.forEach(line => line.visible = tooltipsEnabled);
+        // Toggle moon orbit lines (only those for the current planet)
+        orbs.forEach((orb, i) => {
+            if (orb.moons) {
+                orb.moons.forEach(moon => {
+                    if (moon.orbitLine) {
+                        // Only show if in planet view of this planet, or in moon view of this planet
+                        moon.orbitLine.visible = tooltipsEnabled && (
+                            (inMoonView && currentTargetIndex === i) || (!inMoonView && currentTargetIndex === i)
+                        );
+                    }
+                });
+            }
+        });
+        // Also immediately update tooltips
+        updateTooltips();
+        // Toggle controls UI (instructions)
+        const instructions = document.getElementById('instructions');
+        if (instructions) instructions.style.display = tooltipsEnabled ? '' : 'none';
     }
 });
 
@@ -293,6 +372,151 @@ function updateCameraFollowing() {
     }
 }
 
+// Tooltip always-on logic for planets, moons, galaxies
+let tooltipsEnabled = true;
+const raycaster = new THREE.Raycaster();
+const tooltip = window._solarSystemTooltip;
+const tooltipElements = [];
+const moonTooltipElements = [];
+
+function createTooltipForObject(obj, label, isMoon = false) {
+    const el = document.createElement('div');
+    el.className = 'object-tooltip';
+    el.innerHTML = label;
+    el.style.position = 'absolute';
+    el.style.pointerEvents = 'none';
+    el.style.background = 'rgba(30,30,40,0.95)';
+    el.style.color = '#fff';
+    el.style.padding = '8px 16px';
+    el.style.borderRadius = '10px';
+    el.style.fontSize = '1.05em';
+    el.style.fontWeight = 'bold';
+    el.style.boxShadow = '0 4px 24px rgba(0,0,0,0.25)';
+    el.style.transition = 'opacity 0.2s';
+    el.style.opacity = '1';
+    el.style.zIndex = '1000';
+    document.body.appendChild(el);
+    if (isMoon) {
+        moonTooltipElements.push({el, obj});
+    } else {
+        tooltipElements.push({el, obj});
+    }
+}
+
+function getObjectLabel(obj) {
+    if (obj.userData && obj.userData.isMoon) {
+        return `<b>${obj.name}</b>`;
+    } else if (obj.userData && obj.userData.isPlanet) {
+        return `<b>${obj.name}</b>`;
+    } else if (obj.name && obj.name.includes('galaxy')) {
+        return `<b>${obj.name.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}</b>`;
+    } else if (obj.name && obj.name.startsWith('stars_')) {
+        return `<b>${obj.name.replace('stars_', '').toUpperCase()} Class Stars</b>`;
+    }
+    return null;
+}
+
+// Mark planets and moons for tooltips
+orbs.forEach((orb, planetIdx) => {
+    orb.userData.isPlanet = true;
+    createTooltipForObject(orb, getObjectLabel(orb));
+    orb.moons.forEach((moon, moonIdx) => {
+        moon.userData.isMoon = true;
+        createTooltipForObject(moon, getObjectLabel(moon), true);
+    });
+});
+
+// Hover logic for moons
+window.addEventListener('pointermove', (event) => {
+    const mouse = new THREE.Vector2(
+        (event.clientX / window.innerWidth) * 2 - 1,
+        -(event.clientY / window.innerHeight) * 2 + 1
+    );
+    raycaster.setFromCamera(mouse, camera);
+    const intersects = raycaster.intersectObjects(orbs.flatMap(orb => orb.moons), true);
+    let found = false;
+    moonTooltipElements.forEach(({el, obj}) => {
+        el.style.opacity = '0';
+    });
+    for (let i = 0; i < intersects.length; i++) {
+        const obj = intersects[i].object;
+        const moonTip = moonTooltipElements.find(t => t.obj === obj);
+        if (moonTip) {
+            moonTip.el.style.opacity = '1';
+            found = true;
+            break;
+        }
+    }
+});
+
+function updateTooltips() {
+    if (!tooltipsEnabled) {
+        tooltipElements.forEach(({el}) => el.style.opacity = '0');
+        moonTooltipElements.forEach(({el}) => el.style.opacity = '0');
+        return;
+    }
+    tooltipElements.forEach(({el, obj}, idx) => {
+        // In moon view: only show the parent planet's tooltip
+        if (inMoonView) {
+            if (currentTargetIndex >= 0 && obj === orbs[currentTargetIndex]) {
+                el.style.opacity = '1';
+            } else {
+                el.style.opacity = '0';
+            }
+        } else {
+            // Hide tooltip if this is the current planet
+            if (!inMoonView && currentTargetIndex >= 0 && obj === orbs[currentTargetIndex]) {
+                el.style.opacity = '0';
+                return;
+            }
+            el.style.opacity = '1';
+        }
+        // Position
+        let pos = new THREE.Vector3();
+        if (obj.getWorldPosition) {
+            obj.getWorldPosition(pos);
+        } else if (obj.position) {
+            pos.copy(obj.position);
+        }
+        pos.project(camera);
+        const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+        const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+        el.style.left = `${x}px`;
+        el.style.top = `${y - 32}px`;
+    });
+    // Moon tooltips: only show on hover, or if in planet view for that planet, or in moon view for that planet (except the selected moon)
+    moonTooltipElements.forEach(({el, obj}) => {
+        let show = false;
+        // Show if hovered (opacity already set to 1 by pointermove handler)
+        if (el.style.opacity === '1') {
+            show = true;
+        } else if (!inMoonView && currentTargetIndex >= 0 && orbs[currentTargetIndex].moons.includes(obj)) {
+            show = true;
+        } else if (inMoonView && currentTargetIndex >= 0 && orbs[currentTargetIndex].moons.includes(obj)) {
+            // Hide the tooltip for the currently selected moon
+            if (!(currentMoonIndex >= 0 && obj === orbs[currentTargetIndex].moons[currentMoonIndex])) {
+                show = true;
+            }
+        }
+        if (show) {
+            let pos = new THREE.Vector3();
+            if (obj.getWorldPosition) {
+                obj.getWorldPosition(pos);
+            } else if (obj.position) {
+                pos.copy(obj.position);
+            }
+            pos.project(camera);
+            const x = (pos.x * 0.5 + 0.5) * window.innerWidth;
+            const y = (-pos.y * 0.5 + 0.5) * window.innerHeight;
+            el.style.left = `${x}px`;
+            el.style.top = `${y - 32}px`;
+            el.style.opacity = '1';
+        } else {
+            el.style.opacity = '0';
+        }
+    });
+}
+
 // Animation loop
 let lastTime = performance.now();
 let currentOrbIndex = 0;
@@ -301,7 +525,7 @@ function animate() {
     const currentTime = performance.now();
     const deltaTime = (currentTime - lastTime) / 1000.0;
     lastTime = currentTime;
-    updatePhysics(orbs, scene, timeScale);
+    updatePhysics(orbs, scene, timeScale, tooltipsEnabled, inMoonView, currentTargetIndex);
     // Animate Saturn rings (if using custom shader/uniforms)
     if (orbs[5] && orbs[5].userData && orbs[5].userData.rings) {
         orbs[5].userData.rings.forEach(ringMaterial => {
@@ -321,6 +545,7 @@ function animate() {
         updateCameraFollowing();
         controls.update();
     }
+    updateTooltips(); // <-- Ensure tooltips update every frame
     renderer.render(scene, camera);
 }
 animate();
@@ -331,3 +556,6 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
 });
+
+// Ensure tooltips are visible by default
+setTimeout(() => { updateTooltips(); }, 100);

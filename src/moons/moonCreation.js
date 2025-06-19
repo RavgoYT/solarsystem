@@ -2,7 +2,7 @@ import { realMoonData } from './moonData.js';
 import { applyMoonOrbitalMechanics } from './moonOrbitalMechanics.js';
 import { createPlanetaryGlow } from '../planets/planetFeatures.js';
 
-export function createMoons(orb, planetIndex, camera) {
+export function createMoons(orb, planetIndex, camera, scene) {
     // Add named moons first
     if (realMoonData[planetIndex]) {
         realMoonData[planetIndex].forEach((moonInfo, moonIndex) => {
@@ -34,6 +34,20 @@ export function createMoons(orb, planetIndex, camera) {
             }
             orb.add(moon);
             orb.moons.push(moon);
+
+            // --- Moon orbit line (trailing path) ---
+            const orbitGeometry = new THREE.BufferGeometry();
+            const material = new THREE.LineBasicMaterial({
+                color: 0xffffff,
+                transparent: true,
+                opacity: 0.7
+            });
+            const line = new THREE.Line(orbitGeometry, material);
+            line.frustumCulled = false;
+            scene.add(line); // scene must be in scope or passed in
+            moon.orbitPath = [];
+            moon.orbitLine = line;
+            //console.log(`Created orbit line for moon ${moon.name} (planet ${planetIndex})`, line.id);
         });
     }
     // Adding generic moons if planet has more moons than named ones in the moonData cuz i am NOT adding all the moons lol.
@@ -64,5 +78,19 @@ export function createMoons(orb, planetIndex, camera) {
         moon.userData = { orbitalInclination: inclination, orbitalPeriod: 1 + Math.random() * 10, rotationPeriod: 1 + Math.random() * 10, tidallyLocked: true };
         orb.add(moon);
         orb.moons.push(moon);
+
+        // --- Moon orbit line (trailing path) ---
+        const orbitGeometry = new THREE.BufferGeometry();
+        const material = new THREE.LineBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 0.7
+        });
+        const line = new THREE.Line(orbitGeometry, material);
+        line.frustumCulled = false;
+        scene.add(line); // scene must be in scope or passed in
+        moon.orbitPath = [];
+        moon.orbitLine = line;
+        //console.log(`Created orbit line for moon ${moon.name} (planet ${planetIndex})`, line.id);
     }
 }

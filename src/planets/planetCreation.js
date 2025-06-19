@@ -160,22 +160,25 @@ export function createPlanets(scene, camera) {
 
         // Create moons
         if (realMoonData[i]) {
-            createMoons(orb, i, camera);
+            createMoons(orb, i, camera, scene);
         }
 
         orbs.push(orb);
         scene.add(orb);
 
-        // Create orbit lines
+        // Create orbit lines (trailing path)
         const orbitGeometry = new THREE.BufferGeometry();
         const material = new THREE.LineBasicMaterial({
-            color: 0x444444,
-            transparent: false,
-            opacity: 1
+            color: 0xffffff, // white
+            transparent: true,
+            opacity: 0.7
         });
         const line = new THREE.Line(orbitGeometry, material);
+        line.frustumCulled = false; // Always render
         orbitLines.push(line);
         scene.add(line);
+        orb.orbitPath = [];
+        orb.orbitLine = line;
     }
 
     return { orbs, orbitLines };

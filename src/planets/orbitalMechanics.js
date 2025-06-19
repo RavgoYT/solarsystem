@@ -11,8 +11,8 @@ export function applyOrbitalMechanics(celestialBody, orbitalData) {
     celestialBody.userData.rotationSpeed = celestialBody.userData.isRetrograde ? -rotationSpeed : rotationSpeed;
 }
 
-export function updatePhysics(orbs, scene) {
-    let timeScale = parseFloat(document.getElementById('speed').value) || 0.1;
+export function updatePhysics(orbs, scene, timeScale = 0.1, tooltipsEnabled = true, inMoonView = false, currentTargetIndex = -1) {
+    // Use the passed-in timeScale, not the slider value directly
     const orbitLines = orbs.map((_, i) => scene.getObjectByName(`orbit_line_${i}`) || orbs[i].orbitLine);
 
     orbs.forEach((orb, index) => {
@@ -39,13 +39,25 @@ export function updatePhysics(orbs, scene) {
         }
         orb.position.set(x, y, z);
 
-        // Update orbit path
+        // Update orbit path (trailing line that follows the planet, not a full history)
+        // Calculate max trail length based on distance
+        const maxTrailLength = (orb.distance * 6.75);
+        // Use a capped minimum step for smoothness at high speed
+        const minTrailStep = Math.min(orb.distance * 0.01, 1); // Never more than 1 unit
         const newPosition = orb.position.clone();
-        if (isFinite(newPosition.x) && isFinite(newPosition.y) && isFinite(newPosition.z)) {
+        let lastTrailPos = orb.orbitPath.length > 0 ? orb.orbitPath[orb.orbitPath.length - 1] : null;
+        if (!lastTrailPos || newPosition.distanceTo(lastTrailPos) > minTrailStep) {
+            // If moving a large distance, interpolate points
+            if (lastTrailPos && newPosition.distanceTo(lastTrailPos) > minTrailStep * 1.5) {
+                const steps = Math.ceil(newPosition.distanceTo(lastTrailPos) / minTrailStep);
+                for (let s = 1; s < steps; s++) {
+                    const interp = lastTrailPos.clone().lerp(newPosition, s / steps);
+                    orb.orbitPath.push(interp);
+                }
+            }
             orb.orbitPath.push(newPosition);
-            if (orb.orbitPath.length > 30000) orb.orbitPath.shift();
+            if (orb.orbitPath.length > maxTrailLength) orb.orbitPath.splice(0, orb.orbitPath.length - maxTrailLength);
         }
-
         if (orb.orbitPath.length > 1) {
             const positions = new Float32Array(orb.orbitPath.length * 3);
             let validPositions = true;
@@ -62,6 +74,8 @@ export function updatePhysics(orbs, scene) {
                 orbitLines[index].geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
                 orbitLines[index].geometry.attributes.position.needsUpdate = true;
                 orbitLines[index].geometry.computeBoundingSphere();
+                orbitLines[index].position.set(0, 0, 0);
+                orbitLines[index].frustumCulled = false;
             }
         }
 
@@ -95,6 +109,66 @@ export function updatePhysics(orbs, scene) {
             const y = Math.sin(moon.angle) * distance * Math.sin(inclination);
             const z = Math.sin(moon.angle) * distance * Math.cos(inclination);
             moon.position.set(x, y, z);
+
+            // --- Moon orbit path (trailing line) update ---
+            const maxTrailLength = (moon.distance * 6.75);
+            const minTrailStep = Math.min(moon.distance * 0.01, 1);
+            // Get moon's world position for the orbit path
+            const newWorldPosition = moon.getWorldPosition(new THREE.Vector3());
+            let lastTrailPos = moon.orbitPath.length > 0 ? moon.orbitPath[moon.orbitPath.length - 1] : null;
+            if (!lastTrailPos || newWorldPosition.distanceTo(lastTrailPos) > minTrailStep) {
+                if (lastTrailPos && newWorldPosition.distanceTo(lastTrailPos) > minTrailStep * 1.5) {
+                    const steps = Math.ceil(newWorldPosition.distanceTo(lastTrailPos) / minTrailStep);
+                    for (let s = 1; s < steps; s++) {
+                        const interp = lastTrailPos.clone().lerp(newWorldPosition, s / steps);
+                        moon.orbitPath.push(interp);
+                    }
+                }
+                moon.orbitPath.push(newWorldPosition.clone());
+                if (moon.orbitPath.length > maxTrailLength) moon.orbitPath.splice(0, moon.orbitPath.length - maxTrailLength);
+            }
+            // --- Moon orbit line visibility logic ---
+            if (moon.orbitPath.length > 1 && moon.orbitLine) {
+                // Show if currentTargetIndex matches this planet, and we're in planet or moon view
+                const shouldShow = tooltipsEnabled && (currentTargetIndex === index);
+                if (moon.orbitLine.visible !== shouldShow) {
+                    //console.log(`Moon orbit line for ${moon.name} (planet ${index}) visible:`, shouldShow, 'inMoonView:', inMoonView, 'currentTargetIndex:', currentTargetIndex);
+                }
+                moon.orbitLine.visible = shouldShow;
+                // Debug: log orbitPath length and endpoints if visible
+                if (shouldShow) {
+                    //console.log(`Moon ${moon.name} orbitPath length:`, moon.orbitPath.length, 'First:', moon.orbitPath[0], 'Last:', moon.orbitPath[moon.orbitPath.length-1]);
+                    // Restore moon orbit line to match planet style
+                    if (!(moon.orbitLine.material instanceof THREE.LineBasicMaterial)) {
+                        moon.orbitLine.material = new THREE.LineBasicMaterial({
+                            color: 0xffffff,
+                            transparent: true,
+                            opacity: 0.7
+                        });
+                    } else {
+                        moon.orbitLine.material.color.set(0xffffff);
+                        moon.orbitLine.material.opacity = 0.7;
+                    }
+                    // Remove debug offset, ensure line is at world origin
+                    moon.orbitLine.position.set(0, 0, 0);
+                }
+                // Always update geometry, even if not visible
+                // Ensure all points are in world coordinates
+                const positions = new Float32Array(moon.orbitPath.length * 3);
+                let validPositions = true;
+                moon.orbitPath.forEach((pos, i) => {
+                    // If pos is not in world coordinates, convert it here (if needed)
+                    positions[i * 3] = pos.x;
+                    positions[i * 3 + 1] = pos.y;
+                    positions[i * 3 + 2] = pos.z;
+                });
+                if (validPositions) {
+                    moon.orbitLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                    moon.orbitLine.geometry.attributes.position.needsUpdate = true;
+                    moon.orbitLine.geometry.computeBoundingSphere();
+                    moon.orbitLine.frustumCulled = false;
+                }
+            }
 
             if (moon.userData.tidallyLocked) {
                 // If camera is tidal-locked to this moon, always face the planet
